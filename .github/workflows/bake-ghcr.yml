@@ -13,39 +13,25 @@ concurrency:
 
 jobs:
   bake:
-    runs-on: [self-hosted, ocr-bake]
+    runs-on: ubuntu-latest
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install crane and extract kaniko
-        run: |
-          set -euxo pipefail
-          apt-get update -y
-          apt-get install -y --no-install-recommends curl ca-certificates tar gzip
-          curl -sL https://github.com/google/go-containerregistry/releases/download/v0.20.3/go-containerregistry_Linux_x86_64.tar.gz \
-            | tar -xz -C /usr/local/bin crane
-          mkdir -p /opt/kroot
-          crane export gcr.io/kaniko-project/executor:v1.23.2 | tar -C /opt/kroot -xf -
-          test -x /opt/kroot/kaniko/executor
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Build and push GHCR image
-        env:
-          GHCR_USER: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euxo pipefail
-          mkdir -p /kaniko/.docker "$HOME/.docker"
-          AUTH=$(printf '%s:%s' "$GHCR_USER" "$GHCR_TOKEN" | base64 -w0)
-          printf '{"auths":{"ghcr.io":{"auth":"%s"}}}\n' "$AUTH" > /kaniko/.docker/config.json
-          cp /kaniko/.docker/config.json "$HOME/.docker/config.json"
-          export DOCKER_CONFIG=/kaniko/.docker
-          /opt/kroot/kaniko/executor \
-            --force \
-            --dockerfile="$GITHUB_WORKSPACE/Dockerfile" \
-            --context="$GITHUB_WORKSPACE" \
-            --destination=ghcr.io/avocahdoe/ocr-worker:1.0 \
-            --compressed-caching=false \
-            --cache=false \
-            --cleanup \
-            --verbosity=info
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ghcr.io/avocahdoe/ocr-worker:1.0
+          platforms: linux/amd64
+          provenance: false
+          sbom: false
