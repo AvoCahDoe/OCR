@@ -44,10 +44,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxrender1 \
         libgomp1 \
         ca-certificates \
+        curl \
     && python${PYTHON_VERSION} -c "import sys; print(sys.version)" \
     && ln -sf /usr/bin/python${PYTHON_VERSION} /usr/local/bin/python \
     && ln -sf /usr/bin/python${PYTHON_VERSION} /usr/local/bin/python3 \
-    && python${PYTHON_VERSION} -m ensurepip --upgrade \
+    && curl -sS https://bootstrap.pypa.io/get-pip.py | python${PYTHON_VERSION} \
     && python${PYTHON_VERSION} -m pip install --no-cache-dir --upgrade pip \
     && ldd /usr/bin/python${PYTHON_VERSION} \
     && ldd /usr/bin/python${PYTHON_VERSION} | grep -q libexpat \
