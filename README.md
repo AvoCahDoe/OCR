@@ -4,7 +4,9 @@ Serverless worker for **PaddleOCR-VL-1.6** (vision OCR). One action: OCR. Option
 
 `schema_version`: **1.0**
 
-**Image:** `ghcr.io/avocahdoe/ocr-worker:1.0`
+**Repo:** [AvoCahDoe/OCR](https://github.com/AvoCahDoe/OCR)  
+**Image:** `ghcr.io/avocahdoe/ocr-worker:1.0`  
+**Endpoint:** [`7ltawf1fgpzchm`](https://www.runpod.io/console/serverless/7ltawf1fgpzchm) — `https://api.runpod.ai/v2/7ltawf1fgpzchm/runsync`
 
 ## Architecture
 
@@ -152,7 +154,9 @@ Optional offline populate: [`scripts/download_models.py`](scripts/download_model
 
 ## RunPod endpoint
 
-Queue-based serverless worker (this image’s `CMD` already calls `runpod.serverless.start`).
+Queue-based serverless worker (this image’s entrypoint already calls `runpod.serverless.start`).
+
+**ID:** `7ltawf1fgpzchm` (QUEUE, FlashBoot, `workersMin=0`, `workersMax=1`, queue delay 30s, `idleTimeout=120`, disk 50GB, AMPERE_24 + ADA_24).
 
 **GPU:** 24GB class. Allow multiple types — A5000 stock is often tight. Use **A5000 / L4 / RTX 3090 / MIG 24GB** (`$0.69/hr` = `$0.0001917/s`). Paddle uses ~90% of GPU memory (`FLAGS_fraction_of_gpu_memory_to_use=0.90`).
 
