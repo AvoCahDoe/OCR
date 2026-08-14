@@ -1,0 +1,1 @@
+"""RunPod serverless OCR worker."""

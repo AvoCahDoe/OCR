@@ -1,0 +1,8 @@
+{
+  "input": {
+    "action": "ocr",
+    "image": "https://paddle-model-ecology.bj.bcebos.com/paddlex/imgs/demo_image/paddleocr_vl_demo.png",
+    "output_format": "layout_json",
+    "request_id": "example-layout-1"
+  }
+}

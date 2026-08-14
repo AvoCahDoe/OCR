@@ -1,0 +1,86 @@
+"""Module-level PaddleOCR-VL singleton. Load once per worker, not per request."""
+
+from __future__ import annotations
+
+import logging
+import os
+import threading
+from pathlib import Path
+from typing import Any
+
+from config import OCR_PIPELINE_VERSION, PADDLE_GPU_MEMORY_FRACTION, skip_model_load
+from weights import resolve_paddle_dir
+
+logger = logging.getLogger(__name__)
+
+_paddle_lock = threading.Lock()
+_ocr_pipeline: Any = None
+_ocr_load_error: str | None = None
+
+
+def _configure_runtime_env() -> None:
+    os.environ.setdefault("FLAGS_fraction_of_gpu_memory_to_use", str(PADDLE_GPU_MEMORY_FRACTION))
+    os.environ.setdefault("FLAGS_allocator_strategy", "auto_growth")
+    os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
+    cache = str(resolve_paddle_dir())
+    os.environ["PADDLE_PDX_CACHE_HOME"] = cache
+    os.environ["PADDLE_MODEL_DIR"] = cache
+
+
+def warmup() -> None:
+    """Download (if needed) then disk→GPU load once per worker process."""
+    if skip_model_load():
+        logger.info("SKIP_MODEL_LOAD=1; skipping model warmup")
+        return
+    _configure_runtime_env()
+    logger.info("Warmup paddle_cache=%s", os.environ.get("PADDLE_PDX_CACHE_HOME"))
+    get_ocr_pipeline()
+
+
+def ocr_loaded() -> bool:
+    return _ocr_pipeline is not None
+
+
+def ocr_load_error() -> str | None:
+    return _ocr_load_error
+
+
+def get_ocr_pipeline() -> Any:
+    global _ocr_pipeline, _ocr_load_error
+    if _ocr_pipeline is not None:
+        return _ocr_pipeline
+    with _paddle_lock:
+        if _ocr_pipeline is not None:
+            return _ocr_pipeline
+        try:
+            _configure_runtime_env()
+            from paddleocr import PaddleOCRVL
+
+            _ocr_pipeline = PaddleOCRVL(
+                pipeline_version=OCR_PIPELINE_VERSION,
+                precision="fp16",
+                device="gpu:0",
+            )
+            marker = Path(os.environ["PADDLE_PDX_CACHE_HOME"]) / ".baked"
+            if not marker.is_file():
+                marker.write_text(f"PaddleOCR-VL {OCR_PIPELINE_VERSION}\n", encoding="utf-8")
+            _ocr_load_error = None
+            logger.info(
+                "Loaded PaddleOCR-VL %s cache=%s",
+                OCR_PIPELINE_VERSION,
+                os.environ.get("PADDLE_PDX_CACHE_HOME"),
+            )
+            return _ocr_pipeline
+        except Exception as exc:
+            _ocr_load_error = str(exc)
+            logger.exception("Failed to load PaddleOCR-VL")
+            raise
+
+
+def gpu_available() -> bool:
+    try:
+        import paddle
+
+        return bool(paddle.device.cuda.device_count())
+    except Exception:
+        return False
