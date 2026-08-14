@@ -41,6 +41,7 @@ jobs:
           cp /kaniko/.docker/config.json "$HOME/.docker/config.json"
           export DOCKER_CONFIG=/kaniko/.docker
           /opt/kroot/kaniko/executor \
+            --force \
             --dockerfile="$GITHUB_WORKSPACE/Dockerfile" \
             --context="$GITHUB_WORKSPACE" \
             --destination=ghcr.io/avocahdoe/ocr-worker:1.0 \

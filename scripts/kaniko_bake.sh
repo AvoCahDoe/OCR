@@ -10,6 +10,7 @@ AUTH=$(printf 'avocahdoe:%s' "$GITHUB_TOKEN" | base64 -w0)
 printf '{"auths":{"ghcr.io":{"auth":"%s"}}}\n' "$AUTH" > /kaniko/.docker/config.json
 export DOCKER_CONFIG=/kaniko/.docker
 /opt/kroot/kaniko/executor \
+  --force \
   --dockerfile=/work/Dockerfile \
   --context=/work \
   --destination=ghcr.io/avocahdoe/ocr-worker:1.0 \
