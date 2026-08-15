@@ -47,7 +47,7 @@ jobs:
           context: .
           file: Dockerfile.runpod
           push: true
-          tags: ghcr.io/avocahdoe/ocr-worker:1.4
+          tags: ghcr.io/avocahdoe/ocr-worker:1.5
           platforms: linux/amd64
           provenance: false
           sbom: false

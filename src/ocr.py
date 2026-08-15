@@ -19,7 +19,11 @@ def run_ocr(visual: dict[str, Any]) -> dict[str, Any]:
     pipeline = get_ocr_pipeline()
     paddle_input = visual["path"] if visual["kind"] == "pdf" else visual["array"]
     ensure_dynamic_graph()
-    results = pipeline.predict(paddle_input, use_queues=False)
+    results = pipeline.predict(
+        paddle_input,
+        use_queues=False,
+        max_new_tokens=768,
+    )
     if results is None:
         raise RuntimeError("PaddleOCR-VL returned no results")
     if not isinstance(results, list):

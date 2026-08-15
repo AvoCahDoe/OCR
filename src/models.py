@@ -24,7 +24,7 @@ _ocr_load_error: str | None = None
 
 def _configure_runtime_env() -> None:
     os.environ.setdefault("FLAGS_fraction_of_gpu_memory_to_use", str(PADDLE_GPU_MEMORY_FRACTION))
-    os.environ.setdefault("FLAGS_allocator_strategy", "auto_growth")
+    os.environ.setdefault("FLAGS_allocator_strategy", "naive_best_fit")
     os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
     cache = str(resolve_paddle_dir())
     os.environ["PADDLE_PDX_CACHE_HOME"] = cache
