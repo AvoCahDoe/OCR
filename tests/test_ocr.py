@@ -28,9 +28,55 @@ def test_layout_from_json_attr():
     assert _extract_layout(page)["boxes"][0]["label"] == "text"
 
 
-def test_markdown_to_plain():
-    md = "# Head\n\nA [link](http://x) and `code`"
-    plain = _markdown_to_plain(md)
-    assert "Head" in plain
-    assert "link" in plain
-    assert "http" not in plain
+def test_plain_from_parsing_res_list():
+    page = {
+        "width": 482,
+        "height": 284,
+        "layout_det_res": {
+            "boxes": [{"label": "text", "coordinate": [3, 18, 467, 278]}],
+        },
+        "parsing_res_list": [
+            {"label": "text", "bbox": [3, 18, 467, 278], "content": "Article 2. – L'indemnisation"},
+            {"label": "image", "content": ""},
+        ],
+    }
+    assert _extract_plain(page) == "Article 2. – L'indemnisation"
+
+
+def test_plain_from_printed_paddle_dump():
+    dump = (
+        "{'input_path': None, 'layout_det_res': {'boxes': []}, "
+        "'parsing_res_list': [\n\n#################\nlabel:\ttext\n"
+        "bbox:\t[3, 18, 467, 278]\ncontent:\tArticle 2. – L'indemnisation\n"
+        "#################], 'dtype=uint8'}"
+    )
+    assert _extract_plain(dump) == "Article 2. – L'indemnisation"
+
+
+def test_markdown_from_parsing_titles():
+    page = {
+        "parsing_res_list": [
+            {"label": "paragraph_title", "content": "Title"},
+            {"label": "text", "content": "Body"},
+        ]
+    }
+    assert _extract_markdown(page) == "## Title\n\nBody"
+
+
+def test_layout_omits_image_arrays():
+    page = {
+        "width": 10,
+        "height": 20,
+        "doc_preprocessor_res": {"output_img": "ndarray-not-here"},
+        "layout_det_res": {
+            "input_img": "nope",
+            "boxes": [{"label": "text", "score": 0.9, "coordinate": [1, 2, 3, 4]}],
+        },
+        "parsing_res_list": [{"label": "text", "bbox": [1, 2, 3, 4], "content": "Hi"}],
+    }
+    layout = _extract_layout(page)
+    assert layout["width"] == 10
+    assert layout["blocks"][0]["content"] == "Hi"
+    assert "output_img" not in layout
+    assert "input_img" not in layout
+
