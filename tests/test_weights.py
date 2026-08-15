@@ -32,3 +32,18 @@ def test_paddle_prefers_network_volume(tmp_path, monkeypatch):
     monkeypatch.setattr(weights_mod, "BAKED_PADDLE_DIR", tmp_path / "missing-baked")
     monkeypatch.setattr(weights_mod, "DEFAULT_PADDLE_CACHE", tmp_path / "default-cache")
     assert resolve_paddle_dir() == paddle.resolve()
+
+
+def test_paddle_empty_cache_uses_mounted_volume(tmp_path, monkeypatch):
+    """Dockerfile default PADDLE_MODEL_DIR must not steal an empty mounted volume."""
+    env_cache = tmp_path / "models-paddleocr"
+    vol_root = tmp_path / "runpod-volume"
+    vol_root.mkdir()
+    monkeypatch.setenv("PADDLE_MODEL_DIR", str(env_cache))
+    monkeypatch.setattr(weights_mod, "VOLUME_ROOT", vol_root)
+    monkeypatch.setattr(weights_mod, "BAKED_PADDLE_DIR", tmp_path / "no-bake")
+    monkeypatch.setattr(weights_mod, "DEFAULT_PADDLE_CACHE", tmp_path / "default-cache")
+    resolved = resolve_paddle_dir()
+    assert resolved == (vol_root / "paddleocr").resolve()
+    assert resolved.is_dir()
+    assert not env_cache.exists()

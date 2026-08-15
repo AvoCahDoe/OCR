@@ -5,7 +5,8 @@ Serverless worker for **PaddleOCR-VL-1.6** (vision OCR). One action: OCR. Option
 `schema_version`: **1.0**
 
 **Repo:** [AvoCahDoe/OCR](https://github.com/AvoCahDoe/OCR)  
-**Image:** `ghcr.io/avocahdoe/ocr-worker:1.0`  
+**Image (bake):** `ghcr.io/avocahdoe/ocr-worker:1.0`  
+**Image (workers):** GitHub integration → RunPod registry via [`Dockerfile.runpod`](Dockerfile.runpod) (falls back to GHCR until that import exists)  
 **Endpoint:** [`7ltawf1fgpzchm`](https://www.runpod.io/console/serverless/7ltawf1fgpzchm) — `https://api.runpod.ai/v2/7ltawf1fgpzchm/runsync`
 
 ## Architecture
@@ -112,19 +113,25 @@ curl -s -X POST http://localhost:8000/runsync -H "Content-Type: application/json
 
 Two different costs get conflated:
 
-1. **Image pull** — first time a RunPod host runs this tag. Subsequent workers on that host reuse the cached layers.
+1. **Image pull** — first time a RunPod host runs this tag. GHCR pulls of the CUDA + Paddle image can take **10–20+ minutes**. Subsequent workers on that host reuse cached layers. Prefer RunPod's registry (GitHub integration + `Dockerfile.runpod`) so workers do not pull `ghcr.io`.
 2. **Model load** — Python reading weight files from disk into VRAM (Paddle init). This happens on every **new worker process**, not every request.
 
-The image is **slim** (GPU wheels + handler). On a new worker, PaddleOCR-VL **downloads at runtime** into `/models/paddleocr` (container disk), then loads to GPU. Later requests on that process reuse VRAM. A new host repeats the download.
+Live endpoint settings that make this usable:
 
-- `warmup()` runs in a **daemon thread** after the handler registers, not at import and not inside `handler()`.
-- Optional: point `PADDLE_MODEL_DIR` at a network volume to persist caches across workers. Not required.
+- **`workersMin = 1`** — one worker stays up (~$0.69/hr on the 24GB class). OCR after that worker is Ready is seconds, not 20 minutes. Idle GPU is the cost of skipping scale-to-zero.
+- **Network volume `ocr-vl-weights`** (`z5yovim9kc`, 20 GB, `EU-RO-1`) mounted at `/runpod-volume`. First Hub download of PaddleOCR-VL writes to `/runpod-volume/paddleocr`; later workers reuse it.
+- **Job timeout 15 min** (`executionTimeoutMs=900000`) so the first request after a new worker can wait out Hub download + GPU load. The old 3-minute timeout failed that first job.
+- FlashBoot remains on.
+
+`warmup()` runs in a **daemon thread** after the handler registers, not at import and not inside `handler()`. If `/runpod-volume` is mounted, empty-cache downloads go there even when the image default `PADDLE_MODEL_DIR` is `/models/paddleocr`.
 
 | Lever | What to set | When |
 | --- | --- | --- |
-| Min workers ≥ 1 | endpoint `workersMin` | Steady traffic; pays idle GPU, zero cold starts on that worker |
-| Idle timeout | 5–10s+ | Bursty-but-frequent; keep the process warm between bursts |
+| Min workers ≥ 1 | endpoint `workersMin` (live: **1**) | App-facing; pays idle GPU, zero cold starts on that worker |
+| Network volume | `PADDLE_MODEL_DIR=/runpod-volume/paddleocr` | Persist VL weights across workers |
+| Idle timeout | 5–10s+ above min | Only scales workers **above** `workersMin` |
 | FlashBoot | enable on the endpoint if your tier supports it | Snapshots a warmed worker so later cold starts skip much of init |
+| RunPod registry | GitHub integration + `Dockerfile.runpod` | Avoid slow GHCR pulls on new hosts |
 
 ## Docker build
 
@@ -143,12 +150,19 @@ Pinned stack:
 | PaddlePaddle | 3.2.1 GPU (cu126) |
 | PaddleOCR | 3.6.0 `[doc-parser]` |
 
-Push to **public GHCR**:
+Push to **public GHCR** (slow paddle bake; RunPod GitHub builder cannot finish this in 30 minutes):
 
 ```bash
 echo $GITHUB_PAT | docker login ghcr.io -u avocahdoe --password-stdin
 docker push ghcr.io/avocahdoe/ocr-worker:1.0
 ```
+
+Then overlay handler code into **RunPod's registry** with [`Dockerfile.runpod`](Dockerfile.runpod) (`FROM ghcr.io/avocahdoe/ocr-worker:1.0` + `COPY src`). RunPod does not accept `docker push` to their registry. Use GitHub integration:
+
+1. Connect GitHub under [RunPod Settings → Connections](https://console.runpod.io/user/settings) (MCP cannot create that OAuth link).
+2. Serverless → New Endpoint → **Import Git Repository** → `AvoCahDoe/OCR`, Dockerfile path `Dockerfile.runpod`.
+3. Match GPU pools `AMPERE_24` + `ADA_24`, attach volume `ocr-vl-weights`, `workersMin=1`, timeout 15 min, same env as below.
+4. If that creates a **new** endpoint ID, either retarget `7ltawf1fgpzchm`'s image to the built RunPod-registry URI, or update clients to the new URL. New GitHub **releases** (not plain commits) trigger rebuilds.
 
 Optional offline populate: [`scripts/download_models.py`](scripts/download_models.py) into `/models` or a volume.
 
@@ -156,11 +170,13 @@ Optional offline populate: [`scripts/download_models.py`](scripts/download_model
 
 Queue-based serverless worker (this image’s entrypoint already calls `runpod.serverless.start`).
 
-**ID:** `7ltawf1fgpzchm` (QUEUE, FlashBoot, `workersMin=0`, `workersMax=1`, queue delay 30s, `idleTimeout=120`, disk 50GB, AMPERE_24 + ADA_24).
+**ID:** `7ltawf1fgpzchm` (QUEUE, FlashBoot, **`workersMin=1`**, `workersMax=1`, queue delay 30s, `idleTimeout=120`, job timeout **15 min**, disk 50GB, AMPERE_24 + ADA_24).
+
+**Volume:** `ocr-vl-weights` (`z5yovim9kc`, 20 GB STANDARD, `EU-RO-1`) mounted at `/runpod-volume`. Attaching a volume pins workers to that DC.
 
 **GPU:** 24GB class. Allow multiple types — A5000 stock is often tight. Use **A5000 / L4 / RTX 3090 / MIG 24GB** (`$0.69/hr` = `$0.0001917/s`). Paddle uses ~90% of GPU memory (`FLAGS_fraction_of_gpu_memory_to_use=0.90`).
 
-**Workers:** `concurrency = 1`. Dev: `min workers = 0`. App-facing: `min workers = 1` to avoid cold starts. Idle timeout 5–10s. Enable **FlashBoot**. Container disk **~30GB** (runtime weight cache).
+**Workers:** `concurrency = 1`. Live: **`min workers = 1`** (idle GPU ~$0.69/hr; no 20-minute GHCR cold start on each request). FlashBoot on. Container disk **50GB**.
 
 **Env vars** (set on the endpoint, not baked secrets):
 
@@ -168,7 +184,8 @@ Queue-based serverless worker (this image’s entrypoint already calls `runpod.s
 | --- | --- | --- |
 | `GPU_TYPE` | `A5000` | Label in `cost.gpu_type` |
 | `GPU_PRICE_PER_SEC` | `0.0001917` | Estimate multiplier |
-| `PADDLE_MODEL_DIR` | `/models/paddleocr` | Paddle VL download cache |
+| `PADDLE_MODEL_DIR` | `/runpod-volume/paddleocr` | Paddle VL download cache (volume) |
+| `PADDLE_PDX_CACHE_HOME` | `/runpod-volume/paddleocr` | Same cache for PaddleX |
 | `MAX_IMAGE_BYTES` | `20971520` | 20 MB |
 | `MAX_IMAGE_SIDE` | `2560` | Downscale longest side |
 | `MAX_PDF_PAGES` | `5` | PDF page cap |
@@ -204,6 +221,9 @@ src/handler.py       RunPod entry + action router
 src/ocr.py           run_ocr(image) → plain / markdown / layout
 src/images.py        URL / base64 / PDF ingest
 src/models.py        PaddleOCR-VL singleton
+src/weights.py       cache dir (prefer /runpod-volume when mounted)
 src/schema.py        v1.0 contract
+Dockerfile           GHCR paddle bake
+Dockerfile.runpod    thin overlay for RunPod GitHub builder / registry
 scripts/download_models.py   optional offline/local weight fetch
 ```

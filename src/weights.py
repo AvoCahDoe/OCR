@@ -49,6 +49,11 @@ def resolve_paddle_dir() -> Path:
     for path in candidates:
         if _is_usable_dir(path, markers=(".baked",)):
             return path.resolve()
-    cache = candidates[0]
+    # Dockerfile default PADDLE_MODEL_DIR=/models/paddleocr would otherwise win over an
+    # empty network volume. Prefer the volume for new downloads when it is mounted.
+    if VOLUME_ROOT.is_dir():
+        cache = _volume_paddle()
+    else:
+        cache = candidates[0]
     cache.mkdir(parents=True, exist_ok=True)
     return cache.resolve()

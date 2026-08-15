@@ -1,0 +1,9 @@
+# Thin overlay for RunPod GitHub integration (30-minute docker build timeout).
+# Heavy Paddle/CUDA layers stay in the public GHCR bake; this only copies handler code
+# so RunPod can store the result in its secure registry.
+# syntax=docker/dockerfile:1.7
+FROM ghcr.io/avocahdoe/ocr-worker:1.0
+COPY src /app/src
+COPY scripts/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
