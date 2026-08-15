@@ -7,8 +7,10 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from images import crop_regions
 from models import get_ocr_pipeline
 from paddle_compat import ensure_dynamic_graph
+from schema import InputError, _clip_error
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +62,68 @@ def run_ocr(visual: dict[str, Any]) -> dict[str, Any]:
         "plain": plain,
         "markdown": markdown or plain,
         "layout": layouts if len(layouts) > 1 else (layouts[0] if layouts else None),
+        "regions": None,
     }
+
+
+def run_ocr_regions(visual: dict[str, Any], bboxes: list[dict[str, Any]]) -> dict[str, Any]:
+    """OCR each bbox crop. Failures stay on that region; the job still succeeds."""
+    if visual.get("kind") != "image":
+        raise InputError("bboxes are not supported for PDF input")
+    pipeline = get_ocr_pipeline()
+    ensure_dynamic_graph()
+    crops = crop_regions(visual, bboxes)
+    regions: list[dict[str, Any]] = []
+    plains: list[str] = []
+    for crop in crops:
+        entry: dict[str, Any] = {
+            "id": crop["id"],
+            "bbox": crop["bbox"],
+            "text": "",
+            "error": crop.get("error"),
+        }
+        if crop.get("label") is not None:
+            entry["label"] = crop["label"]
+        if crop.get("error") or crop.get("array") is None:
+            regions.append(entry)
+            continue
+        try:
+            text = _predict_crop(pipeline, crop["array"])
+        except Exception as exc:
+            logger.exception("region OCR failed id=%s", crop["id"])
+            entry["error"] = _clip_error(str(exc))
+            regions.append(entry)
+            continue
+        entry["text"] = text
+        entry["error"] = None
+        if text:
+            plains.append(text)
+        regions.append(entry)
+    return {
+        "plain": "\n\n".join(plains).strip(),
+        "markdown": None,
+        "layout": None,
+        "regions": regions,
+    }
+
+
+def _predict_crop(pipeline: Any, array: Any) -> str:
+    kwargs: dict[str, Any] = {
+        "use_queues": False,
+        "max_new_tokens": 768,
+        "use_layout_detection": False,
+    }
+    try:
+        results = pipeline.predict(array, **kwargs)
+    except TypeError:
+        kwargs.pop("use_layout_detection", None)
+        results = pipeline.predict(array, **kwargs)
+    if results is None:
+        return ""
+    if not isinstance(results, list):
+        results = list(results)
+    plains = [_extract_plain(page) for page in results]
+    return "\n\n".join(p for p in plains if p).strip()
 
 
 def _extract_plain(page: Any) -> str:

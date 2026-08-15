@@ -1,0 +1,13 @@
+{
+  "input": {
+    "action": "ocr",
+    "image": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/release/2.7/doc/imgs/11.jpg",
+    "bboxes": [
+      {"id": "title", "bbox": [10, 10, 480, 80], "label": "text"},
+      [10, 90, 480, 480]
+    ],
+    "bbox_format": "xyxy",
+    "output_format": "plain",
+    "request_id": "example-ocr-regions-1"
+  }
+}

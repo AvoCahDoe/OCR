@@ -5,7 +5,7 @@ Serverless worker for **PaddleOCR-VL-1.6** (vision OCR). One action: OCR. Option
 `schema_version`: **1.0**
 
 **Repo:** [AvoCahDoe/OCR](https://github.com/AvoCahDoe/OCR)  
-**Image (bake):** `ghcr.io/avocahdoe/ocr-worker:1.8` (overlay on `:1.0` CUDA/Paddle base)  
+**Image (bake):** `ghcr.io/avocahdoe/ocr-worker:1.9` (overlay on `:1.0` CUDA/Paddle base)  
 **Image (workers):** GitHub integration → RunPod registry via [`Dockerfile.runpod`](Dockerfile.runpod) (falls back to GHCR until that import exists)  
 **Endpoint:** [`7ltawf1fgpzchm`](https://www.runpod.io/console/serverless/7ltawf1fgpzchm) — `https://api.runpod.ai/v2/7ltawf1fgpzchm/runsync`
 
@@ -19,7 +19,8 @@ Request → handler (action) → PaddleOCR-VL-1.6 → text
 
 | Action | Input | Behavior |
 | --- | --- | --- |
-| `ocr` (default) | `image` | PaddleOCR-VL only |
+| `ocr` (default) | `image` | Full-page PaddleOCR-VL |
+| `ocr` | `image` + `bboxes` | OCR each patch; one box is a single crop |
 | `health` | — | GPU + model-load check (warmup ping) |
 
 ## Input
@@ -36,7 +37,8 @@ Request → handler (action) → PaddleOCR-VL-1.6 → text
 }
 ```
 
-- `image`: JPEG / PNG / WEBP / TIFF / BMP, or PDF (first `MAX_PDF_PAGES`, default 5). Max **20 MB**. Longest side downscaled to **2560**.
+- `image`: JPEG / PNG / WEBP / TIFF / BMP, or PDF (first `MAX_PDF_PAGES`, default 5). Max **20 MB**. Longest side downscaled to **2560** for full-page jobs.
+- `bboxes` (optional): list of `[x0,y0,x1,y1]` or `{id, bbox, label}` in **original image pixels** (`bbox_format`: `xyxy` only). Cap `MAX_BBOXES` (default 32). Not valid with PDF.
 - `output_format`: `plain` | `markdown` | `layout_json`.
 - `lang`: accepted for forward compatibility; VL-1.6 is already multilingual (109 languages) and does not take a lang switch.
 - `request_id`: worker-local idempotency TTL (default 600s). Not shared across workers.
@@ -52,7 +54,8 @@ Request → handler (action) → PaddleOCR-VL-1.6 → text
   "output": {
     "text": "...",
     "markdown": null,
-    "layout": null
+    "layout": null,
+    "regions": null
   },
   "timing": { "ocr_ms": 123.4, "total_ms": 130.0 },
   "cost": {
@@ -69,7 +72,7 @@ Request → handler (action) → PaddleOCR-VL-1.6 → text
 }
 ```
 
-`text` is always the plain OCR string. `markdown` / `layout` are filled only when `output_format` is `markdown` or `layout_json`.
+`text` is always the plain OCR string. `markdown` / `layout` are filled only when `output_format` is `markdown` or `layout_json` on a **full-page** job. With `bboxes`, `regions` is a per-box list and `text` is those strings joined with blank lines. Full-page jobs set `regions` to `null`.
 
 `cost.estimated_cost_usd` is **not a bill**. RunPod charges wall-clock worker seconds (including idle timeout after the job), which this figure does not include. `billed_seconds` is `ceil(total_ms / 1000)`.
 
@@ -191,6 +194,8 @@ Queue-based serverless worker (this image’s entrypoint already calls `runpod.s
 | `MAX_IMAGE_BYTES` | `20971520` | 20 MB |
 | `MAX_IMAGE_SIDE` | `2560` | Downscale longest side |
 | `MAX_PDF_PAGES` | `5` | PDF page cap |
+| `MAX_BBOXES` | `32` | Max regions per `ocr` job |
+| `BBOX_PAD_PX` | `8` | Padding around each crop |
 | `IDEMPOTENCY_TTL_S` | `600` | `request_id` cache TTL |
 | `LOG_LEVEL` | `INFO` | stdout. Grep `[ocr]` for worker state, input, output preview, image counts, idle countdown |
 | `IDLE_TIMEOUT_S` | `120` | Must match endpoint idle timeout; used for `idle_left` logs |

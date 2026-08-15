@@ -32,6 +32,7 @@ def test_ocr_plain():
     assert resp["output"]["markdown"] is None
     assert resp["output"]["layout"] is None
     assert "corrected_text" not in resp["output"]
+    assert resp["output"]["regions"] is None
     ocr.assert_called_once()
 
 
@@ -171,3 +172,61 @@ def test_ocr_logs_state_input_output(caplog):
     assert "Article 2." in text
     assert "images=1" in text
     assert "idle_left=" in text
+
+
+def test_ocr_regions_path():
+    _reset_cache()
+    regions = [
+        {"id": "r1", "bbox": [1, 2, 3, 4], "text": "Hello", "error": None},
+        {"id": "r2", "bbox": [5, 6, 7, 8], "text": "World", "error": None},
+    ]
+    with (
+        patch(
+            "handler.load_visual",
+            return_value={"kind": "image", "array": "img", "path": None, "cleanup": []},
+        ),
+        patch("handler.cleanup_visual"),
+        patch("handler.run_ocr") as page_ocr,
+        patch(
+            "handler.run_ocr_regions",
+            return_value={
+                "plain": "Hello\n\nWorld",
+                "markdown": None,
+                "layout": None,
+                "regions": regions,
+            },
+        ) as region_ocr,
+    ):
+        resp = handler(
+            {
+                "input": {
+                    "image": "x",
+                    "bboxes": [[1, 2, 3, 4], [5, 6, 7, 8]],
+                    "request_id": "reg-1",
+                }
+            }
+        )
+    assert resp["success"] is True
+    assert resp["output"]["text"] == "Hello\n\nWorld"
+    assert resp["output"]["regions"] == regions
+    assert resp["output"]["layout"] is None
+    region_ocr.assert_called_once()
+    page_ocr.assert_not_called()
+
+
+def test_pdf_with_bboxes_fails():
+    _reset_cache()
+    with (
+        patch(
+            "handler.load_visual",
+            return_value={"kind": "pdf", "array": None, "path": "/tmp/x.pdf", "cleanup": []},
+        ),
+        patch("handler.cleanup_visual"),
+        patch("handler.run_ocr") as page_ocr,
+        patch("handler.run_ocr_regions") as region_ocr,
+    ):
+        resp = handler({"input": {"image": "x", "bboxes": [[0, 0, 1, 1]]}})
+    assert resp["success"] is False
+    assert "PDF" in resp["error"]["message"]
+    page_ocr.assert_not_called()
+    region_ocr.assert_not_called()

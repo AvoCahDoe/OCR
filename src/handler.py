@@ -27,7 +27,7 @@ from models import (  # noqa: E402
     ocr_loaded,
     warmup,
 )
-from ocr import run_ocr  # noqa: E402
+from ocr import run_ocr, run_ocr_regions  # noqa: E402
 from cost import estimate_cost  # noqa: E402
 from schema import InputError, build_response, error_response, parse_input  # noqa: E402
 from timing import timed_ms  # noqa: E402
@@ -184,11 +184,20 @@ def _handle_ocr(
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     visual = None
     ocr_ms: float | None = None
+    bboxes = parsed.get("bboxes")
     try:
-        visual = _load_visual_and_pipeline(parsed["image"])
+        visual = _load_visual_and_pipeline(
+            parsed["image"],
+            keep_full_res=bool(bboxes),
+        )
+        if bboxes and visual.get("kind") == "pdf":
+            raise InputError("bboxes are not supported for PDF input")
         status.note_visual(visual)
         with timed_ms() as ocr_box:
-            ocr_result = run_ocr(visual)
+            if bboxes:
+                ocr_result = run_ocr_regions(visual, bboxes)
+            else:
+                ocr_result = run_ocr(visual)
         ocr_ms = ocr_box[0]
     except InputError:
         raise
@@ -211,6 +220,7 @@ def _handle_ocr(
     markdown = ocr_result.get("markdown") or None
     layout = ocr_result.get("layout")
     fmt = parsed["output_format"]
+    regions = ocr_result.get("regions")
 
     return (
         build_response(
@@ -218,8 +228,9 @@ def _handle_ocr(
             request_id=parsed["request_id"],
             output={
                 "text": plain,
-                "markdown": markdown if fmt == "markdown" else None,
-                "layout": layout if fmt == "layout_json" else None,
+                "markdown": markdown if fmt == "markdown" and not regions else None,
+                "layout": layout if fmt == "layout_json" and not regions else None,
+                "regions": regions,
             },
             timing={"ocr_ms": ocr_ms, "total_ms": total_box[0]},
         ),
@@ -227,10 +238,12 @@ def _handle_ocr(
     )
 
 
-def _load_visual_and_pipeline(image_spec: str) -> dict[str, Any]:
+def _load_visual_and_pipeline(
+    image_spec: str, *, keep_full_res: bool = False
+) -> dict[str, Any]:
     """Fetch/decode the image while the VL pipeline loads on another thread."""
     if skip_model_load() or ocr_loaded():
-        return load_visual(image_spec)
+        return load_visual(image_spec, keep_full_res=keep_full_res)
 
     errors: list[BaseException] = []
 
@@ -242,7 +255,7 @@ def _load_visual_and_pipeline(image_spec: str) -> dict[str, Any]:
 
     loader = threading.Thread(target=_ensure_pipeline, name="ocr-pipeline", daemon=True)
     loader.start()
-    visual = load_visual(image_spec)
+    visual = load_visual(image_spec, keep_full_res=keep_full_res)
     loader.join()
     if errors:
         raise errors[0]

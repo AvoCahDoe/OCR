@@ -8,7 +8,7 @@ import pytest
 from PIL import Image
 from pypdf import PdfWriter
 
-from images import load_visual
+from images import crop_regions, load_visual
 from schema import InputError
 
 
@@ -83,3 +83,33 @@ def test_pdf_page_limit(monkeypatch):
 
     assert len(PdfReader(visual["path"]).pages) == 2
     Path(visual["path"]).unlink(missing_ok=True)
+
+
+def test_keep_full_res_skips_page_downscale(monkeypatch):
+    monkeypatch.setattr("images.MAX_IMAGE_SIDE", 64)
+    visual = load_visual(_png_b64(width=200, height=100), keep_full_res=True)
+    h, w = visual["array"].shape[:2]
+    assert (w, h) == (200, 100)
+
+
+def test_crop_regions_pads_and_clamps():
+    visual = load_visual(_png_b64(width=40, height=20))
+    crops = crop_regions(
+        visual,
+        [{"id": "r1", "bbox": [2, 2, 8, 8], "label": None}],
+        pad_px=2,
+    )
+    assert crops[0]["error"] is None
+    assert crops[0]["array"].shape[0] == 10
+    assert crops[0]["array"].shape[1] == 10
+
+
+def test_crop_regions_outside_is_empty():
+    visual = load_visual(_png_b64(width=20, height=20))
+    crops = crop_regions(
+        visual,
+        [{"id": "bad", "bbox": [100, 100, 110, 110], "label": None}],
+        pad_px=8,
+    )
+    assert crops[0]["error"] == "empty crop"
+    assert crops[0]["array"] is None

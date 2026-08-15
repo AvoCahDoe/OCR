@@ -6,8 +6,11 @@ from typing import Any
 
 from config import (
     ACTIONS,
+    ALLOWED_BBOX_FORMATS,
     DEFAULT_ACTION,
+    DEFAULT_BBOX_FORMAT,
     DEFAULT_OUTPUT_FORMAT,
+    MAX_BBOXES,
     OUTPUT_FORMATS,
     SCHEMA_VERSION,
     model_versions,
@@ -50,16 +53,76 @@ def parse_input(job: dict[str, Any]) -> dict[str, Any]:
         "output_format": output_format,
         "lang": raw.get("lang"),
         "request_id": request_id,
+        "bboxes": None,
+        "bbox_format": DEFAULT_BBOX_FORMAT,
     }
 
     if action == "ocr":
         if not parsed["image"] or not str(parsed["image"]).strip():
             raise InputError("image (base64 or URL) is required for this action")
         parsed["image"] = str(parsed["image"]).strip()
+        parsed["bboxes"] = _parse_bboxes(raw)
+        if parsed["bboxes"] is not None:
+            parsed["bbox_format"] = _parse_bbox_format(raw)
+            if _looks_like_pdf_spec(parsed["image"]):
+                raise InputError("bboxes are not supported for PDF input")
     if parsed["lang"] is not None:
         parsed["lang"] = str(parsed["lang"])
 
     return parsed
+
+
+def _parse_bbox_format(raw: dict[str, Any]) -> str:
+    fmt = str(raw.get("bbox_format") or DEFAULT_BBOX_FORMAT).strip().lower()
+    if fmt not in ALLOWED_BBOX_FORMATS:
+        raise InputError(
+            f"Unknown bbox_format {fmt!r}; expected one of {sorted(ALLOWED_BBOX_FORMATS)}"
+        )
+    return fmt
+
+
+def _parse_bboxes(raw: dict[str, Any]) -> list[dict[str, Any]] | None:
+    if "bboxes" not in raw or raw.get("bboxes") is None:
+        return None
+    boxes = raw["bboxes"]
+    if not isinstance(boxes, list):
+        raise InputError("bboxes must be a list")
+    if not boxes:
+        raise InputError("bboxes must be a non-empty list")
+    if len(boxes) > MAX_BBOXES:
+        raise InputError(f"bboxes exceeds MAX_BBOXES ({MAX_BBOXES}); got {len(boxes)}")
+    return [_parse_one_bbox(item, index) for index, item in enumerate(boxes)]
+
+
+def _parse_one_bbox(item: Any, index: int) -> dict[str, Any]:
+    label = None
+    ident = str(index)
+    coords: Any
+    if isinstance(item, (list, tuple)):
+        coords = item
+    elif isinstance(item, dict):
+        coords = item.get("bbox") if item.get("bbox") is not None else item.get("coordinate")
+        if item.get("id") is not None:
+            ident = str(item["id"]).strip() or ident
+        if item.get("label") is not None:
+            label = str(item["label"])
+    else:
+        raise InputError(f"bboxes[{index}] must be [x0,y0,x1,y1] or an object with bbox")
+    if not isinstance(coords, (list, tuple)) or len(coords) != 4:
+        raise InputError(f"bboxes[{index}] bbox must have 4 numbers")
+    try:
+        x0, y0, x1, y1 = (float(value) for value in coords)
+    except (TypeError, ValueError) as exc:
+        raise InputError(f"bboxes[{index}] bbox must be numeric") from exc
+    return {"id": ident, "bbox": [x0, y0, x1, y1], "label": label}
+
+
+def _looks_like_pdf_spec(image_spec: str) -> bool:
+    lowered = image_spec.strip().lower()
+    if lowered.startswith("data:application/pdf"):
+        return True
+    path = lowered.split("?", 1)[0]
+    return path.endswith(".pdf")
 
 
 def build_response(

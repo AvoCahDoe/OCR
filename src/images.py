@@ -16,6 +16,7 @@ from pypdf import PdfReader, PdfWriter
 
 from config import (
     ALLOWED_IMAGE_FORMATS,
+    BBOX_PAD_PX,
     MAX_IMAGE_BYTES,
     MAX_IMAGE_SIDE,
     MAX_PDF_PAGES,
@@ -27,7 +28,7 @@ _DATA_URI_RE = re.compile(r"^data:([^;,]+)?(;base64)?,(.*)$", re.DOTALL | re.IGN
 _URL_RE = re.compile(r"^https?://", re.IGNORECASE)
 
 
-def load_visual(image_spec: str) -> dict[str, Any]:
+def load_visual(image_spec: str, *, keep_full_res: bool = False) -> dict[str, Any]:
     """Return a Paddle-ready input: numpy image or temp PDF path.
 
     Result keys:
@@ -43,7 +44,7 @@ def load_visual(image_spec: str) -> dict[str, Any]:
         )
     if _looks_like_pdf(raw):
         return _prepare_pdf(raw)
-    return _prepare_image(raw)
+    return _prepare_image(raw, downscale=not keep_full_res)
 
 
 def _fetch_bytes(image_spec: str) -> bytes:
@@ -90,7 +91,7 @@ def _looks_like_pdf(raw: bytes) -> bool:
     return raw[:5] == b"%PDF-"
 
 
-def _prepare_image(raw: bytes) -> dict[str, Any]:
+def _prepare_image(raw: bytes, *, downscale: bool = True) -> dict[str, Any]:
     try:
         with Image.open(io.BytesIO(raw)) as img:
             img.load()
@@ -101,7 +102,8 @@ def _prepare_image(raw: bytes) -> dict[str, Any]:
                     f"allowed: {sorted(ALLOWED_IMAGE_FORMATS)}"
                 )
             rgb = img.convert("RGB")
-            rgb = _downscale(rgb)
+            if downscale:
+                rgb = _downscale(rgb)
             import numpy as np
 
             array = np.asarray(rgb)
@@ -131,6 +133,87 @@ def _downscale(img: Image.Image) -> Image.Image:
     scale = MAX_IMAGE_SIDE / float(longest)
     new_size = (max(1, int(w * scale)), max(1, int(h * scale)))
     return img.resize(new_size, Image.Resampling.LANCZOS)
+
+
+def crop_regions(
+    visual: dict[str, Any],
+    bboxes: list[dict[str, Any]],
+    *,
+    pad_px: int | None = None,
+) -> list[dict[str, Any]]:
+    """Crop original-pixel xyxy boxes from a decoded image. Per-item errors, no throw."""
+    if visual.get("kind") != "image" or visual.get("array") is None:
+        raise InputError("bboxes are not supported for PDF input")
+    array = visual["array"]
+    height, width = int(array.shape[0]), int(array.shape[1])
+    pad = BBOX_PAD_PX if pad_px is None else int(pad_px)
+    crops: list[dict[str, Any]] = []
+    for item in bboxes:
+        ident = str(item.get("id", ""))
+        raw_bbox = [float(v) for v in item["bbox"]]
+        label = item.get("label")
+        try:
+            x0, y0, x1, y1 = _clamp_padded_xyxy(raw_bbox, width, height, pad)
+        except InputError as exc:
+            crops.append(
+                {
+                    "id": ident,
+                    "bbox": raw_bbox,
+                    "label": label,
+                    "array": None,
+                    "error": exc.message,
+                }
+            )
+            continue
+        crop = array[y0:y1, x0:x1]
+        if crop.size == 0 or crop.shape[0] < 1 or crop.shape[1] < 1:
+            crops.append(
+                {
+                    "id": ident,
+                    "bbox": raw_bbox,
+                    "label": label,
+                    "array": None,
+                    "error": "empty crop",
+                }
+            )
+            continue
+        crops.append(
+            {
+                "id": ident,
+                "bbox": raw_bbox,
+                "label": label,
+                "array": _maybe_downscale_array(crop),
+                "error": None,
+            }
+        )
+    return crops
+
+
+def _clamp_padded_xyxy(
+    bbox: list[float], width: int, height: int, pad: int
+) -> tuple[int, int, int, int]:
+    x0, y0, x1, y1 = bbox
+    if x1 < x0:
+        x0, x1 = x1, x0
+    if y1 < y0:
+        y0, y1 = y1, y0
+    x0i = max(0, int(x0) - pad)
+    y0i = max(0, int(y0) - pad)
+    x1i = min(width, int(x1) + pad)
+    y1i = min(height, int(y1) + pad)
+    if x1i <= x0i or y1i <= y0i:
+        raise InputError("empty crop")
+    return x0i, y0i, x1i, y1i
+
+
+def _maybe_downscale_array(array: Any) -> Any:
+    height, width = array.shape[:2]
+    if max(height, width) <= MAX_IMAGE_SIDE:
+        return array
+    import numpy as np
+
+    img = Image.fromarray(array)
+    return np.asarray(_downscale(img))
 
 
 def _prepare_pdf(raw: bytes) -> dict[str, Any]:

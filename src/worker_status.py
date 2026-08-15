@@ -207,13 +207,15 @@ class WorkerStatus:
             if action == "health":
                 self.jobs_health += 1
         _emit(
-            "[ocr] JOB start #%s action=%s request_id=%s job_id=%s format=%s lang=%s input=%s",
+            "[ocr] JOB start #%s action=%s request_id=%s job_id=%s format=%s lang=%s "
+            "regions=%s input=%s",
             seq,
             parsed.get("action"),
             parsed.get("request_id") or "-",
             job_id or "-",
             parsed.get("output_format") or "-",
             parsed.get("lang") or "-",
+            len(parsed.get("bboxes") or []) or "-",
             summarize_image_spec(parsed.get("image")),
         )
         return seq
@@ -250,6 +252,15 @@ class WorkerStatus:
         output = response.get("output") or {}
         error = response.get("error") or {}
         pages = _page_count(visual, output.get("layout")) if action == "ocr" and success else 0
+        region_list = output.get("regions") if isinstance(output, dict) else None
+        region_n = len(region_list) if isinstance(region_list, list) else 0
+        region_ok = (
+            sum(1 for item in region_list if isinstance(item, dict) and not item.get("error"))
+            if region_n
+            else 0
+        )
+        if region_n:
+            pages = region_n
 
         with self._lock:
             if success:
@@ -271,9 +282,12 @@ class WorkerStatus:
 
         if success and action == "ocr":
             text = output.get("text") or ""
+            extra = ""
+            if region_n:
+                extra = f" regions={region_ok}/{region_n}"
             _emit(
                 "[ocr] JOB done #%s ok action=ocr request_id=%s ocr_ms=%s total_ms=%s "
-                "pages=%s text_chars=%s preview=%r images=%s pages_total=%s idle_left=%s",
+                "pages=%s text_chars=%s preview=%r images=%s pages_total=%s%s idle_left=%s",
                 seq or "-",
                 parsed.get("request_id") or "-",
                 _fmt_ms(ocr_ms),
@@ -283,6 +297,7 @@ class WorkerStatus:
                 preview_text(text),
                 images,
                 pages_total,
+                extra,
                 _fmt_left(self.idle_left_s()),
             )
         elif success:

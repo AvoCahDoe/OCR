@@ -22,6 +22,10 @@ DEFAULT_OUTPUT_FORMAT = "plain"
 MAX_IMAGE_BYTES = int(os.environ.get("MAX_IMAGE_BYTES", str(20 * 1024 * 1024)))
 MAX_IMAGE_SIDE = int(os.environ.get("MAX_IMAGE_SIDE", "2560"))
 MAX_PDF_PAGES = int(os.environ.get("MAX_PDF_PAGES", "5"))
+MAX_BBOXES = int(os.environ.get("MAX_BBOXES", "32"))
+BBOX_PAD_PX = int(os.environ.get("BBOX_PAD_PX", "8"))
+ALLOWED_BBOX_FORMATS = frozenset({"xyxy"})
+DEFAULT_BBOX_FORMAT = "xyxy"
 ALLOWED_IMAGE_FORMATS = frozenset({"JPEG", "PNG", "WEBP", "TIFF", "BMP"})
 URL_FETCH_TIMEOUT_S = float(os.environ.get("URL_FETCH_TIMEOUT_S", "30"))
 
