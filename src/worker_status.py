@@ -13,6 +13,15 @@ from config import OCR_MODEL_ID, worker_id
 
 logger = logging.getLogger("ocr")
 
+
+def _emit(message: str, *args: Any) -> None:
+    """Stdout print survives Paddle replacing logging handlers after model load."""
+    text = message % args if args else message
+    if not text.startswith("[ocr]"):
+        text = f"[ocr] {text}"
+    print(text, flush=True)
+    logger.info("%s", text)
+
 _URL_PREFIXES = ("http://", "https://")
 _PREVIEW_LIMIT = 160
 _HEARTBEAT_DEFAULT_S = 15.0
@@ -147,7 +156,7 @@ class WorkerStatus:
             }
 
     def log_boot(self) -> None:
-        logger.info(
+        _emit(
             "[ocr] BOOT worker=%s idle_timeout_s=%s heartbeat_s=%s gpu_type=%s",
             worker_id(),
             int(idle_timeout_s()),
@@ -159,7 +168,7 @@ class WorkerStatus:
         with self._lock:
             self.state = "warming"
             self._warmup_started_at = time.monotonic()
-        logger.info(
+        _emit(
             "[ocr] state=warming cache=%s",
             os.environ.get("PADDLE_PDX_CACHE_HOME") or os.environ.get("PADDLE_MODEL_DIR"),
         )
@@ -172,7 +181,7 @@ class WorkerStatus:
                 self.state = "idle"
                 self.last_idle_at = time.monotonic()
                 self._scale_warned = False
-        logger.info(
+        _emit(
             "[ocr] state=ready model=%s warmup_s=%s",
             OCR_MODEL_ID,
             self.warmup_s if self.warmup_s is not None else "n/a",
@@ -184,7 +193,7 @@ class WorkerStatus:
             if not self._busy:
                 self.state = "idle"
                 self.last_idle_at = time.monotonic()
-        logger.info("[ocr] state=idle warmup_failed error=%r", preview_text(message, 200))
+        _emit("[ocr] state=idle warmup_failed error=%r", preview_text(message, 200))
         self._log_idle_line()
 
     def job_begin(self, parsed: dict[str, Any], *, job_id: str | None = None) -> int:
@@ -197,7 +206,7 @@ class WorkerStatus:
             action = parsed.get("action") or "ocr"
             if action == "health":
                 self.jobs_health += 1
-        logger.info(
+        _emit(
             "[ocr] JOB start #%s action=%s request_id=%s job_id=%s format=%s lang=%s input=%s",
             seq,
             parsed.get("action"),
@@ -210,7 +219,7 @@ class WorkerStatus:
         return seq
 
     def note_visual(self, visual: dict[str, Any] | None) -> None:
-        logger.info("[ocr] INPUT decoded %s", _visual_line(visual))
+        _emit("[ocr] INPUT decoded %s", _visual_line(visual))
 
     def job_cached(self, parsed: dict[str, Any]) -> None:
         with self._lock:
@@ -218,7 +227,7 @@ class WorkerStatus:
             self._busy = False
             self.state = "idle"
             self.last_idle_at = time.monotonic()
-        logger.info(
+        _emit(
             "[ocr] JOB cache-hit request_id=%s images=%s idle_left=%s",
             parsed.get("request_id") or "-",
             self.images_processed,
@@ -262,7 +271,7 @@ class WorkerStatus:
 
         if success and action == "ocr":
             text = output.get("text") or ""
-            logger.info(
+            _emit(
                 "[ocr] JOB done #%s ok action=ocr request_id=%s ocr_ms=%s total_ms=%s "
                 "pages=%s text_chars=%s preview=%r images=%s pages_total=%s idle_left=%s",
                 seq or "-",
@@ -277,7 +286,7 @@ class WorkerStatus:
                 _fmt_left(self.idle_left_s()),
             )
         elif success:
-            logger.info(
+            _emit(
                 "[ocr] JOB done #%s ok action=%s request_id=%s gpu=%s ocr_loaded=%s "
                 "total_ms=%s images=%s idle_left=%s",
                 seq or "-",
@@ -290,7 +299,7 @@ class WorkerStatus:
                 _fmt_left(self.idle_left_s()),
             )
         else:
-            logger.info(
+            _emit(
                 "[ocr] JOB fail #%s action=%s request_id=%s stage=%s error=%r "
                 "total_ms=%s fail=%s images=%s idle_left=%s",
                 seq or "-",
@@ -323,7 +332,7 @@ class WorkerStatus:
         while not self._heartbeat_stop.wait(interval):
             self._maybe_warn_scale_down()
             if self.state == "busy":
-                logger.info(
+                _emit(
                     "[ocr] HEARTBEAT state=busy jobs=%s images=%s pages=%s scale_down=paused",
                     self.jobs_total,
                     self.images_processed,
@@ -334,7 +343,7 @@ class WorkerStatus:
 
     def _log_idle_line(self) -> None:
         snap = self.snapshot()
-        logger.info(
+        _emit(
             "[ocr] HEARTBEAT state=%s jobs=%s ok=%s fail=%s health=%s "
             "images=%s pages=%s last_ocr_ms=%s uptime=%ss idle_left=%s",
             snap["state"],
@@ -356,7 +365,7 @@ class WorkerStatus:
             return
         if left <= _SCALE_DOWN_WARN_S and not self._scale_warned:
             self._scale_warned = True
-            logger.info(
+            _emit(
                 "[ocr] SCALE-DOWN soon idle_left=%s images=%s jobs=%s",
                 _fmt_left(left),
                 self.images_processed,
