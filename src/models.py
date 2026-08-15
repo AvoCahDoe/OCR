@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
+import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import Any
@@ -54,6 +57,8 @@ def get_ocr_pipeline() -> Any:
             return _ocr_pipeline
         try:
             _configure_runtime_env()
+            # PaddleX asserts if `paddle` is imported first. Keep this the first
+            # paddle* import in the process (do not call gpu_available() before).
             from paddleocr import PaddleOCRVL
 
             _ocr_pipeline = PaddleOCRVL(
@@ -78,9 +83,33 @@ def get_ocr_pipeline() -> Any:
 
 
 def gpu_available() -> bool:
+    """True if a CUDA device is visible. Never imports paddle before paddleocr."""
+    smi = _nvidia_smi_has_gpu()
+    if smi is not None:
+        return smi
+    if "paddleocr" not in sys.modules:
+        return False
     try:
         import paddle
 
         return bool(paddle.device.cuda.device_count())
     except Exception:
         return False
+
+
+def _nvidia_smi_has_gpu() -> bool | None:
+    binary = shutil.which("nvidia-smi")
+    if not binary:
+        return None
+    try:
+        proc = subprocess.run(
+            [binary, "-L"],
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return False
+    return bool((proc.stdout or b"").strip())

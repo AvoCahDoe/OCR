@@ -44,6 +44,27 @@ def test_downscale_large_image(monkeypatch):
     assert max(h, w) <= 64
 
 
+def test_url_download_stops_at_size_cap(monkeypatch):
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size=65536):
+            yield b"x" * 32
+            yield b"y" * 32
+
+    monkeypatch.setattr("images.MAX_IMAGE_BYTES", 40)
+    monkeypatch.setattr("images.requests.get", lambda *_a, **_k: FakeResponse())
+    with pytest.raises(InputError, match="MAX_IMAGE_BYTES"):
+        load_visual("https://example.com/huge.png")
+
+
 def test_pdf_page_limit(monkeypatch):
     monkeypatch.setattr("images.MAX_PDF_PAGES", 2)
     writer = PdfWriter()

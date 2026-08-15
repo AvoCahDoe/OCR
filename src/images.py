@@ -60,20 +60,30 @@ def _fetch_bytes(image_spec: str) -> bytes:
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
             raise InputError("Invalid image URL")
         try:
-            response = requests.get(spec, timeout=URL_FETCH_TIMEOUT_S, stream=True)
-            response.raise_for_status()
+            return _download_url_bytes(spec)
         except requests.RequestException as exc:
             raise InputError(f"Failed to fetch image URL: {exc}") from exc
-        content = response.content
-        if len(content) > MAX_IMAGE_BYTES:
-            raise InputError(
-                f"Image URL body exceeds MAX_IMAGE_BYTES ({MAX_IMAGE_BYTES} bytes)"
-            )
-        return content
     try:
         return base64.b64decode(spec, validate=False)
     except Exception as exc:
         raise InputError("image must be a URL, data URI, or base64 string") from exc
+
+
+def _download_url_bytes(url: str) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    with requests.get(url, timeout=URL_FETCH_TIMEOUT_S, stream=True) as response:
+        response.raise_for_status()
+        for chunk in response.iter_content(chunk_size=65536):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > MAX_IMAGE_BYTES:
+                raise InputError(
+                    f"Image URL body exceeds MAX_IMAGE_BYTES ({MAX_IMAGE_BYTES} bytes)"
+                )
+            chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _looks_like_pdf(raw: bytes) -> bool:

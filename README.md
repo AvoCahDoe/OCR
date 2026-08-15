@@ -5,7 +5,7 @@ Serverless worker for **PaddleOCR-VL-1.6** (vision OCR). One action: OCR. Option
 `schema_version`: **1.0**
 
 **Repo:** [AvoCahDoe/OCR](https://github.com/AvoCahDoe/OCR)  
-**Image (bake):** `ghcr.io/avocahdoe/ocr-worker:1.0`  
+**Image (bake):** `ghcr.io/avocahdoe/ocr-worker:1.1` (overlay on `:1.0` CUDA/Paddle base)  
 **Image (workers):** GitHub integration → RunPod registry via [`Dockerfile.runpod`](Dockerfile.runpod) (falls back to GHCR until that import exists)  
 **Endpoint:** [`7ltawf1fgpzchm`](https://www.runpod.io/console/serverless/7ltawf1fgpzchm) — `https://api.runpod.ai/v2/7ltawf1fgpzchm/runsync`
 
@@ -108,6 +108,8 @@ curl -s -X POST http://localhost:8000/runsync -H "Content-Type: application/json
 ```
 
 `/run` is async only on RunPod; locally use `/runsync`.
+
+Gradio lab (not in the image): [`testing_interface/`](testing_interface/).
 
 ## Cold starts
 
@@ -226,4 +228,5 @@ src/schema.py        v1.0 contract
 Dockerfile           GHCR paddle bake
 Dockerfile.runpod    thin overlay for RunPod GitHub builder / registry
 scripts/download_models.py   optional offline/local weight fetch
+testing_interface/   local Gradio lab (health + OCR; not in the image)
 ```

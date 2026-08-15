@@ -20,7 +20,13 @@ if str(SRC_DIR) not in sys.path:
 
 from config import IDEMPOTENCY_TTL_S, SCHEMA_VERSION, skip_model_load  # noqa: E402
 from images import cleanup_visual, load_visual  # noqa: E402
-from models import gpu_available, ocr_load_error, ocr_loaded, warmup  # noqa: E402
+from models import (  # noqa: E402
+    get_ocr_pipeline,
+    gpu_available,
+    ocr_load_error,
+    ocr_loaded,
+    warmup,
+)
 from ocr import run_ocr  # noqa: E402
 from cost import estimate_cost  # noqa: E402
 from schema import InputError, build_response, error_response, parse_input  # noqa: E402
@@ -137,16 +143,15 @@ def _peek_request_id(job: Any) -> str | None:
 
 
 def _handle_health(request_id: str | None, total_box: list[float]) -> dict[str, Any]:
-    gpu_ok = gpu_available()
     ocr_ok = ocr_loaded()
     if not skip_model_load() and not ocr_ok:
         try:
-            from models import get_ocr_pipeline
-
             get_ocr_pipeline()
             ocr_ok = ocr_loaded()
         except Exception:
             ocr_ok = False
+    # After paddleocr (PaddleX forbids importing paddle first).
+    gpu_ok = gpu_available()
     healthy = gpu_ok and ocr_ok
     warning = None
     if not ocr_ok:
@@ -172,7 +177,7 @@ def _handle_ocr(parsed: dict[str, Any], total_box: list[float]) -> dict[str, Any
     visual = None
     ocr_ms: float | None = None
     try:
-        visual = load_visual(parsed["image"])
+        visual = _load_visual_and_pipeline(parsed["image"])
         with timed_ms() as ocr_box:
             ocr_result = run_ocr(visual)
         ocr_ms = ocr_box[0]
@@ -205,6 +210,28 @@ def _handle_ocr(parsed: dict[str, Any], total_box: list[float]) -> dict[str, Any
         },
         timing={"ocr_ms": ocr_ms, "total_ms": total_box[0]},
     )
+
+
+def _load_visual_and_pipeline(image_spec: str) -> dict[str, Any]:
+    """Fetch/decode the image while the VL pipeline loads on another thread."""
+    if skip_model_load() or ocr_loaded():
+        return load_visual(image_spec)
+
+    errors: list[BaseException] = []
+
+    def _ensure_pipeline() -> None:
+        try:
+            get_ocr_pipeline()
+        except BaseException as exc:  # noqa: BLE001 — surface on the request thread
+            errors.append(exc)
+
+    loader = threading.Thread(target=_ensure_pipeline, name="ocr-pipeline", daemon=True)
+    loader.start()
+    visual = load_visual(image_spec)
+    loader.join()
+    if errors:
+        raise errors[0]
+    return visual
 
 
 # Do NOT warmup at import. RunPod kills the container if serverless.start()
