@@ -25,6 +25,7 @@ def _configure_runtime_env() -> None:
     os.environ.setdefault("FLAGS_fraction_of_gpu_memory_to_use", str(PADDLE_GPU_MEMORY_FRACTION))
     os.environ.setdefault("FLAGS_allocator_strategy", "auto_growth")
     os.environ.setdefault("FLAGS_enable_pir_api", "0")
+    os.environ.setdefault("FLAGS_enable_pir_in_executor", "0")
     os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
     cache = str(resolve_paddle_dir())
     os.environ["PADDLE_PDX_CACHE_HOME"] = cache
@@ -62,15 +63,14 @@ def get_ocr_pipeline() -> Any:
             # paddle* import in the process (do not call gpu_available() before).
             from paddleocr import PaddleOCRVL
 
-            kwargs = {
-                "pipeline_version": OCR_PIPELINE_VERSION,
-                "precision": "fp32",
-                "device": "gpu:0",
-            }
-            try:
-                _ocr_pipeline = PaddleOCRVL(engine="transformers", **kwargs)
-            except TypeError:
-                _ocr_pipeline = PaddleOCRVL(**kwargs)
+            # Native Paddle backend. Do not pass engine="transformers": that package
+            # is not in the image, and it also forces layout detection onto HF.
+            _ocr_pipeline = PaddleOCRVL(
+                pipeline_version=OCR_PIPELINE_VERSION,
+                precision="fp32",
+                device="gpu:0",
+                vl_rec_backend="native",
+            )
             marker = Path(os.environ["PADDLE_PDX_CACHE_HOME"]) / ".baked"
             if not marker.is_file():
                 marker.write_text(f"PaddleOCR-VL {OCR_PIPELINE_VERSION}\n", encoding="utf-8")

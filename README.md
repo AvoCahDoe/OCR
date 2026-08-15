@@ -5,7 +5,7 @@ Serverless worker for **PaddleOCR-VL-1.6** (vision OCR). One action: OCR. Option
 `schema_version`: **1.0**
 
 **Repo:** [AvoCahDoe/OCR](https://github.com/AvoCahDoe/OCR)  
-**Image (bake):** `ghcr.io/avocahdoe/ocr-worker:1.2` (overlay on `:1.0` CUDA/Paddle base)  
+**Image (bake):** `ghcr.io/avocahdoe/ocr-worker:1.3` (overlay on `:1.0` CUDA/Paddle base)  
 **Image (workers):** GitHub integration → RunPod registry via [`Dockerfile.runpod`](Dockerfile.runpod) (falls back to GHCR until that import exists)  
 **Endpoint:** [`7ltawf1fgpzchm`](https://www.runpod.io/console/serverless/7ltawf1fgpzchm) — `https://api.runpod.ai/v2/7ltawf1fgpzchm/runsync`
 
