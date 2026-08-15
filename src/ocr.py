@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from models import get_ocr_pipeline
+from paddle_compat import ensure_dynamic_graph
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,8 @@ def run_ocr(visual: dict[str, Any]) -> dict[str, Any]:
     """Run full PaddleOCR-VL pipeline. Returns plain, markdown, and layout."""
     pipeline = get_ocr_pipeline()
     paddle_input = visual["path"] if visual["kind"] == "pdf" else visual["array"]
-    results = pipeline.predict(paddle_input)
+    ensure_dynamic_graph()
+    results = pipeline.predict(paddle_input, use_queues=False)
     if results is None:
         raise RuntimeError("PaddleOCR-VL returned no results")
     if not isinstance(results, list):

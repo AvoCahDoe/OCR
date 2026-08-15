@@ -64,4 +64,5 @@ def test_error_response_clips_paddle_workaround_dump():
     huge = "int(Tensor) is not supported\nThere are two common workarounds available:\n" + ("x" * 2000)
     resp = error_response(stage="ocr", message=huge)
     assert "workarounds" not in resp["error"]["message"]
-    assert len(resp["error"]["message"]) <= 400
+    assert "\n" not in resp["error"]["message"]
+    assert len(resp["error"]["message"]) <= 240

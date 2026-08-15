@@ -107,8 +107,9 @@ def error_response(
     )
 
 
-def _clip_error(message: str, limit: int = 400) -> str:
-    text = str(message).split("There are two common workarounds")[0].strip()
+def _clip_error(message: str, limit: int = 240) -> str:
+    text = str(message).split("There are two common workarounds")[0]
+    text = text.split("\n")[0].strip().replace("`", "'")
     if len(text) > limit:
         return text[: limit - 3] + "..."
     return text
