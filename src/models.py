@@ -14,6 +14,7 @@ from typing import Any
 from config import OCR_PIPELINE_VERSION, PADDLE_GPU_MEMORY_FRACTION, skip_model_load
 from paddle_compat import apply_paddleocr_compat, wrap_vl_rec_model
 from weights import resolve_paddle_dir
+from worker_status import status
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +38,15 @@ def warmup() -> None:
         logger.info("SKIP_MODEL_LOAD=1; skipping model warmup")
         return
     _configure_runtime_env()
+    status.mark_warming()
     logger.info("Warmup paddle_cache=%s", os.environ.get("PADDLE_PDX_CACHE_HOME"))
-    get_ocr_pipeline()
+    try:
+        get_ocr_pipeline()
+    except Exception as exc:
+        logger.exception("Warmup failed")
+        status.mark_warmup_failed(str(exc))
+        return
+    status.mark_ready()
 
 
 def ocr_loaded() -> bool:

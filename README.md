@@ -5,7 +5,7 @@ Serverless worker for **PaddleOCR-VL-1.6** (vision OCR). One action: OCR. Option
 `schema_version`: **1.0**
 
 **Repo:** [AvoCahDoe/OCR](https://github.com/AvoCahDoe/OCR)  
-**Image (bake):** `ghcr.io/avocahdoe/ocr-worker:1.6` (overlay on `:1.0` CUDA/Paddle base)  
+**Image (bake):** `ghcr.io/avocahdoe/ocr-worker:1.7` (overlay on `:1.0` CUDA/Paddle base)  
 **Image (workers):** GitHub integration → RunPod registry via [`Dockerfile.runpod`](Dockerfile.runpod) (falls back to GHCR until that import exists)  
 **Endpoint:** [`7ltawf1fgpzchm`](https://www.runpod.io/console/serverless/7ltawf1fgpzchm) — `https://api.runpod.ai/v2/7ltawf1fgpzchm/runsync`
 
@@ -192,7 +192,9 @@ Queue-based serverless worker (this image’s entrypoint already calls `runpod.s
 | `MAX_IMAGE_SIDE` | `2560` | Downscale longest side |
 | `MAX_PDF_PAGES` | `5` | PDF page cap |
 | `IDEMPOTENCY_TTL_S` | `600` | `request_id` cache TTL |
-| `LOG_LEVEL` | `INFO` | stdout logs (one JSON `metrics` line per job) |
+| `LOG_LEVEL` | `INFO` | stdout. Grep `[ocr]` for worker state, input, output preview, image counts, idle countdown |
+| `IDLE_TIMEOUT_S` | `120` | Must match endpoint idle timeout; used for `idle_left` logs |
+| `HEARTBEAT_S` | `15` | How often idle workers log remaining time before scale-down |
 
 ### Sample calls
 

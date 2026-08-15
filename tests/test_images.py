@@ -24,6 +24,9 @@ def test_load_png():
     assert visual["kind"] == "image"
     assert visual["array"].ndim == 3
     assert visual["array"].shape[2] == 3
+    assert visual["page_count"] == 1
+    assert visual["width"] == 32
+    assert visual["height"] == 32
 
 
 def test_reject_empty_base64_garbage():
@@ -75,6 +78,7 @@ def test_pdf_page_limit(monkeypatch):
     visual = load_visual(base64.b64encode(buf.getvalue()).decode("ascii"))
     assert visual["kind"] == "pdf"
     assert visual["path"]
+    assert visual["page_count"] == 2
     from pypdf import PdfReader
 
     assert len(PdfReader(visual["path"]).pages) == 2

@@ -18,7 +18,7 @@ SRC_DIR = Path(__file__).resolve().parent
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from config import IDEMPOTENCY_TTL_S, SCHEMA_VERSION, skip_model_load  # noqa: E402
+from config import IDEMPOTENCY_TTL_S, skip_model_load  # noqa: E402
 from images import cleanup_visual, load_visual  # noqa: E402
 from models import (  # noqa: E402
     get_ocr_pipeline,
@@ -31,12 +31,16 @@ from ocr import run_ocr  # noqa: E402
 from cost import estimate_cost  # noqa: E402
 from schema import InputError, build_response, error_response, parse_input  # noqa: E402
 from timing import timed_ms  # noqa: E402
+from worker_status import status  # noqa: E402
 
+_LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 logging.basicConfig(
-    level=os.environ.get("LOG_LEVEL", "INFO"),
+    level=_LOG_LEVEL,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger("ocr_worker")
+for noisy in ("httpx", "urllib3", "requests", "paddle", "paddlex", "httpcore"):
+    logging.getLogger(noisy).setLevel(logging.WARNING)
 
 _cache_lock = threading.Lock()
 _response_cache: dict[str, tuple[float, dict[str, Any]]] = {}
@@ -68,47 +72,39 @@ def _cache_set(request_id: str | None, payload: dict[str, Any]) -> None:
         _response_cache[request_id] = (now, payload)
 
 
-def _log_metrics(response: dict[str, Any]) -> None:
-    metrics = {
-        "schema_version": SCHEMA_VERSION,
-        "request_id": response.get("request_id"),
-        "worker_id": response.get("worker_id"),
-        "success": response.get("success"),
-        "timing": response.get("timing"),
-        "cost": response.get("cost"),
-        "error": response.get("error"),
-        "warning": response.get("warning"),
-    }
-    logger.info("metrics %s", json.dumps(metrics, default=str))
-
-
 def handler(job: dict[str, Any]) -> dict[str, Any]:
     request_id: str | None = None
+    seq: int | None = None
+    parsed: dict[str, Any] | None = None
+    visual: dict[str, Any] | None = None
     try:
         parsed = parse_input(job if isinstance(job, dict) else {})
         request_id = parsed["request_id"]
     except InputError as exc:
+        dummy = {"action": "unknown", "request_id": _peek_request_id(job), "image": None}
+        seq = status.job_begin(dummy, job_id=_peek_job_id(job))
         response = error_response(
             stage=exc.stage,
             message=exc.message,
             request_id=_peek_request_id(job),
             timing={"ocr_ms": None, "total_ms": 0.0},
         )
-        _log_metrics(response)
+        status.job_end(dummy, response, seq=seq)
         return response
 
     cached = _cache_get(request_id)
     if cached is not None:
-        logger.info("idempotent hit request_id=%s", request_id)
+        status.job_cached(parsed)
         return cached
 
+    seq = status.job_begin(parsed, job_id=_peek_job_id(job))
     with timed_ms() as total_box:
         try:
             action = parsed["action"]
             if action == "health":
                 response = _handle_health(request_id, total_box)
             else:
-                response = _handle_ocr(parsed, total_box)
+                response, visual = _handle_ocr(parsed, total_box)
         except InputError as exc:
             response = error_response(
                 stage=exc.stage,
@@ -128,8 +124,18 @@ def handler(job: dict[str, Any]) -> dict[str, Any]:
     response.setdefault("timing", {})["total_ms"] = round(total_box[0], 3)
     response["cost"] = estimate_cost(total_box[0])
     _cache_set(request_id, response)
-    _log_metrics(response)
+    status.job_end(parsed, response, seq=seq, visual=visual)
     return response
+
+
+def _peek_job_id(job: Any) -> str | None:
+    if not isinstance(job, dict):
+        return None
+    value = job.get("id")
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _peek_request_id(job: Any) -> str | None:
@@ -173,11 +179,14 @@ def _handle_health(request_id: str | None, total_box: list[float]) -> dict[str, 
     )
 
 
-def _handle_ocr(parsed: dict[str, Any], total_box: list[float]) -> dict[str, Any]:
+def _handle_ocr(
+    parsed: dict[str, Any], total_box: list[float]
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
     visual = None
     ocr_ms: float | None = None
     try:
         visual = _load_visual_and_pipeline(parsed["image"])
+        status.note_visual(visual)
         with timed_ms() as ocr_box:
             ocr_result = run_ocr(visual)
         ocr_ms = ocr_box[0]
@@ -185,11 +194,14 @@ def _handle_ocr(parsed: dict[str, Any], total_box: list[float]) -> dict[str, Any
         raise
     except Exception as exc:
         logger.exception("OCR stage failed")
-        return error_response(
-            stage="ocr",
-            message=str(exc),
-            request_id=parsed["request_id"],
-            timing={"ocr_ms": ocr_ms, "total_ms": total_box[0]},
+        return (
+            error_response(
+                stage="ocr",
+                message=str(exc),
+                request_id=parsed["request_id"],
+                timing={"ocr_ms": ocr_ms, "total_ms": total_box[0]},
+            ),
+            visual,
         )
     finally:
         if visual is not None:
@@ -200,15 +212,18 @@ def _handle_ocr(parsed: dict[str, Any], total_box: list[float]) -> dict[str, Any
     layout = ocr_result.get("layout")
     fmt = parsed["output_format"]
 
-    return build_response(
-        success=True,
-        request_id=parsed["request_id"],
-        output={
-            "text": plain,
-            "markdown": markdown if fmt == "markdown" else None,
-            "layout": layout if fmt == "layout_json" else None,
-        },
-        timing={"ocr_ms": ocr_ms, "total_ms": total_box[0]},
+    return (
+        build_response(
+            success=True,
+            request_id=parsed["request_id"],
+            output={
+                "text": plain,
+                "markdown": markdown if fmt == "markdown" else None,
+                "layout": layout if fmt == "layout_json" else None,
+            },
+            timing={"ocr_ms": ocr_ms, "total_ms": total_box[0]},
+        ),
+        visual,
     )
 
 
@@ -264,6 +279,10 @@ if __name__ == "__main__":
     else:
         import runpod
 
+        os.environ.setdefault("GLOG_minloglevel", "2")
+        os.environ.setdefault("FLAGS_minloglevel", "2")
+        status.log_boot()
+        status.start_heartbeat()
         if not skip_model_load():
             threading.Thread(target=warmup, daemon=True, name="model-warmup").start()
         runpod.serverless.start({"handler": handler})

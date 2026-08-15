@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import logging
 from unittest.mock import patch
 
 import handler as handler_mod
 from handler import handler
+import worker_status as ws
 
 
 def _reset_cache():
     handler_mod._response_cache.clear()
+    ws.reset_for_tests()
 
 
 def test_ocr_plain():
@@ -126,3 +129,45 @@ def test_idempotency_cache():
     assert b["output"]["text"] == "once"
     assert b["timing"]["ocr_ms"] == a["timing"]["ocr_ms"]
     assert ocr.call_count == 1
+
+
+def test_ocr_logs_state_input_output(caplog):
+    _reset_cache()
+    with (
+        patch(
+            "handler.load_visual",
+            return_value={
+                "kind": "image",
+                "array": "img",
+                "path": None,
+                "cleanup": [],
+                "page_count": 1,
+                "width": 482,
+                "height": 284,
+            },
+        ),
+        patch("handler.cleanup_visual"),
+        patch(
+            "handler.run_ocr",
+            return_value={"plain": "Article 2. – L'indemnisation", "markdown": None, "layout": None},
+        ),
+        caplog.at_level(logging.INFO),
+    ):
+        handler(
+            {
+                "id": "job-9",
+                "input": {
+                    "image": "https://cdn.example.com/scan.png?token=secret",
+                    "request_id": "art-2",
+                },
+            }
+        )
+    text = caplog.text
+    assert "JOB start #1" in text
+    assert "url:https://cdn.example.com/scan.png" in text
+    assert "secret" not in text
+    assert "INPUT decoded kind=image 482x284 pages=1" in text
+    assert "JOB done #1 ok" in text
+    assert "Article 2." in text
+    assert "images=1" in text
+    assert "idle_left=" in text

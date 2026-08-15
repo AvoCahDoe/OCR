@@ -105,13 +105,22 @@ def _prepare_image(raw: bytes) -> dict[str, Any]:
             import numpy as np
 
             array = np.asarray(rgb)
+            height, width = array.shape[:2]
     except InputError:
         raise
     except UnidentifiedImageError as exc:
         raise InputError("Image is not decodable") from exc
     except Exception as exc:
         raise InputError(f"Failed to decode image: {exc}") from exc
-    return {"kind": "image", "array": array, "path": None, "cleanup": []}
+    return {
+        "kind": "image",
+        "array": array,
+        "path": None,
+        "cleanup": [],
+        "page_count": 1,
+        "width": int(width),
+        "height": int(height),
+    }
 
 
 def _downscale(img: Image.Image) -> Image.Image:
@@ -142,14 +151,26 @@ def _prepare_pdf(raw: bytes) -> dict[str, Any]:
             tmp.flush()
         finally:
             tmp.close()
-        return {"kind": "pdf", "array": None, "path": tmp.name, "cleanup": [tmp.name]}
+        return {
+            "kind": "pdf",
+            "array": None,
+            "path": tmp.name,
+            "cleanup": [tmp.name],
+            "page_count": MAX_PDF_PAGES,
+        }
     tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
     try:
         tmp.write(raw)
         tmp.flush()
     finally:
         tmp.close()
-    return {"kind": "pdf", "array": None, "path": tmp.name, "cleanup": [tmp.name]}
+    return {
+        "kind": "pdf",
+        "array": None,
+        "path": tmp.name,
+        "cleanup": [tmp.name],
+        "page_count": page_count,
+    }
 
 
 def cleanup_visual(visual: dict[str, Any]) -> None:
