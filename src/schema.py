@@ -103,8 +103,15 @@ def error_response(
         output=None,
         timing=timing,
         warning=None,
-        error={"stage": stage, "message": message},
+        error={"stage": stage, "message": _clip_error(message)},
     )
+
+
+def _clip_error(message: str, limit: int = 400) -> str:
+    text = str(message).split("There are two common workarounds")[0].strip()
+    if len(text) > limit:
+        return text[: limit - 3] + "..."
+    return text
 
 
 def _round_ms(value: float | None) -> float | None:
